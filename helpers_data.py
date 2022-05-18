@@ -4,7 +4,7 @@ import pandas as pd
 # variables
 
 nondate_types = {
-    # list 'column name': type
+    # insert 'column name': type
     # to cast columns to types in bulk
     'cusip': str,
     'cik': 'Int64',
@@ -28,6 +28,7 @@ set_no_0 = lambda x: set([n != 0 for n in x])  # set of all nonzero elements
 join_set = lambda x: '*'.join(sorted([str(item) for item in set(x)]))  # list all unique elements in sorted order in a string
 zeros_percent = lambda x: np.round(sum([num == 0 for num in x]) / len(x), 3)  # percent of zeros in a list
 
+# functions for read_csv() date_parser arg
 date_parser = lambda x: datetime.strptime(x, '%Y%m%d')
 
 
@@ -159,27 +160,29 @@ def set_date_types(df, date_types=date_types, errors='coerce'):
                             errors=errors
                         )
                     else:
+                        # skip converting this column if already in datetime
                         print(f'{col} is already in datetime type')
  
                 if t == 'q':
                     if not ptypes.is_period_dtype(df[col]):
+                        # if not already in Period, convert
                         if not ptypes.is_datetime64_any_dtype(df[col]):
-                            # if not already a datetime
+                            # if not already in datetime, first convert to it
                             df[col] = pd.to_datetime(
                                 df[col].astype(str),
                                 errors=errors
                             )
                             
-                        # convert to Q regardless
+                        # convert to Period in quarters
                         df[col] = df[col].dt.to_period('Q')
                         
                     else:
+                        # skip converting this column if already in Period
                         print(f'{col} is already in period type')
             
             except ValueError as e:
                 print(f'{col} cannot be transformed to type {t}')
-                raise e          
-                
+                raise e                        
             except TypeError:
                 print(f'{col}: type error')
                 pass
@@ -187,16 +190,73 @@ def set_date_types(df, date_types=date_types, errors='coerce'):
     return df                    
 
 
-def set_types(df, nondate_types=nondate_types, date_types=date_types):
+def set_types(df, nondate_types=nondate_types, date_types=date_types, date_errors='coerce'):
+    """Casts the non-date specified columns of a dataframe to specified types.
+    Optionally casts the date columns calling set_date_types()
+    Skips a specified column if it is not present in the dataframe.
+    
+    Args:
+        df: dataframe to convert columns in
+        nondate_types (dict): dictionary of columns and desired types,
+            e.g. {'shares': int}
+        date_types (dict): dictionary of columns and custom string names of desired types,
+            e.g. {'date': 'dt', 'quarter': 'q'}
+        errors (str): 'errors' flag to pass to pd.to_datetime() method.
+            Default: 'coerce', sets not convertable values to None. Optional
+    
+    Returns:
+        Dataframe with converted types
+    """
     for col, t in nondate_types.items():
+        # iterate columns in the dict and check if they are present
         if col in df.columns:            
             try:
+                # convert
                 df[col] = df[col].astype(t)
             except ValueError as e:
                 print(f'{col} cannot be transformed to type {t}')
                 raise e
     
     if date_types:
-        df = set_date_types(df)
+        df = set_date_types(df, errors=date_errors)
     
+    return df
+
+
+def save_parquet(df, path):
+    """Saves a dataframe to parquet format
+    
+    Args:
+        df: the dataframe to save
+        path: the path to save to
+    
+    Returns:
+        None    
+    """
+    df.to_parquet(path, compression='brotli')
+
+
+def zfilled_toint(df, col):
+    """Converts a string column with zero-filled numbers to integers, handling na values.
+    Convets to Int64 if there are na values, and to int otherwise
+    
+    Args:
+        df: the dataframe to covnert a column in
+        col: the column to convert
+    
+    Returns:
+        The dataframe with the column converted
+    """
+    if df[[col]].isnull().values.any():
+        # if has na values, convert without them, then cast to Int64
+        df[col] = df[col].fillna('')
+        df[col] = df[col].str.lstrip('0')
+        df.loc[df[col] != '', col] = df[col].astype(int)
+        df.loc[df[col] == '', col] = None
+        df[col] = df[col].astype('Int64')
+    else:
+        # if no na values, simply cast to int
+        df[col] = df[col].str.lstrip('0')
+        df[col] = df[col].astype(int)
+        
     return df
